@@ -908,6 +908,7 @@ static fih_ret
 boot_image_check(struct boot_loader_state *state, struct image_header *hdr,
                  const struct flash_area *fap, struct boot_status *bs)
 {
+    BOOT_LOG_INF("new boot_image_check");
     TARGET_STATIC uint8_t tmpbuf[BOOT_TMPBUF_SZ];
     int rc;
     FIH_DECLARE(fih_rc, FIH_FAILURE);
@@ -925,9 +926,11 @@ boot_image_check(struct boot_loader_state *state, struct image_header *hdr,
     if (MUST_DECRYPT(fap, BOOT_CURR_IMG(state), hdr)) {
         rc = boot_enc_load(BOOT_CURR_ENC(state), 1, hdr, fap, bs);
         if (rc < 0) {
+            BOOT_LOG_ERR("Failed to load image for decryption");
             FIH_RET(fih_rc);
         }
         if (rc == 0 && boot_enc_set_key(BOOT_CURR_ENC(state), 1, bs)) {
+            BOOT_LOG_ERR("Failed to set key for image decryption");
             FIH_RET(fih_rc);
         }
     }
@@ -936,6 +939,11 @@ boot_image_check(struct boot_loader_state *state, struct image_header *hdr,
     FIH_CALL(bootutil_img_validate, fih_rc, BOOT_CURR_ENC(state),
              BOOT_CURR_IMG(state), hdr, fap, tmpbuf, BOOT_TMPBUF_SZ,
              NULL, 0, NULL);
+
+    if (FIH_NOT_EQ(fih_rc, FIH_SUCCESS)) {
+        BOOT_LOG_ERR("Image %s failed to pass validation",
+                     (BOOT_CURR_ENC(state) == NULL) ? "hash" : "signature");
+    }
 
     FIH_RET(fih_rc);
 }
@@ -1230,12 +1238,18 @@ boot_validate_slot(struct boot_loader_state *state, int slot,
 #endif
     if (!boot_is_header_valid(hdr, fap, state)) {
         fih_rc = FIH_FAILURE;
+        BOOT_LOG_ERR("Image header in the %s slot is not valid!",
+                     (slot == BOOT_PRIMARY_SLOT) ? "primary" : "secondary");
     } else {
         BOOT_HOOK_CALL_FIH(boot_image_check_hook, FIH_BOOT_HOOK_REGULAR,
                            fih_rc, BOOT_CURR_IMG(state), slot);
+        BOOT_LOG_INF("boot_image_check_hook for %s slot: %d",
+                     (slot == BOOT_PRIMARY_SLOT) ? "primary" : "secondary", fih_rc);
         if (FIH_EQ(fih_rc, FIH_BOOT_HOOK_REGULAR)) {
             FIH_CALL(boot_image_check, fih_rc, state, hdr, fap, bs);
         }
+        BOOT_LOG_INF("boot_image_check for %s slot: %d",
+                     (slot == BOOT_PRIMARY_SLOT) ? "primary" : "secondary", fih_rc);
     }
     if (FIH_NOT_EQ(fih_rc, FIH_SUCCESS)) {
         if ((slot != BOOT_PRIMARY_SLOT) || ARE_SLOTS_EQUIVALENT()) {

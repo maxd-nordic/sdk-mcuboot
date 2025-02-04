@@ -489,11 +489,13 @@ bootutil_img_validate(struct enc_key_data *enc_state, int image_index,
 
         rc = bootutil_tlv_iter_begin(&it, hdr, fap, IMAGE_TLV_ANY, true);
         if (rc) {
+            BOOT_LOG_ERR("%d: Failed to iterate over TLVs", __LINE__);
             goto out;
         }
 
         if (it.tlv_end > bootutil_max_image_size(fap)) {
             rc = -1;
+            BOOT_LOG_ERR("TLV area is outside of the image");
             goto out;
         }
 
@@ -503,6 +505,7 @@ bootutil_img_validate(struct enc_key_data *enc_state, int image_index,
 
             rc = bootutil_tlv_iter_next(&it, &off, &len, &type);
             if (rc < 0) {
+                BOOT_LOG_ERR("%d: Failed to iterate over TLVs", __LINE__);
                 goto out;
             } else if (rc > 0) {
                 break;
@@ -526,9 +529,11 @@ bootutil_img_validate(struct enc_key_data *enc_state, int image_index,
 
             if (type == IMAGE_TLV_DECOMP_SIGNATURE && !EXPECTED_SIG_LEN(len)) {
                 rc = -1;
+                BOOT_LOG_ERR("Invalid signature length");
                 goto out;
             } else if (type != IMAGE_TLV_DECOMP_SIGNATURE && len != expected_size) {
                 rc = -1;
+                BOOT_LOG_ERR("Invalid TLV length");
                 goto out;
             }
 
@@ -537,6 +542,7 @@ bootutil_img_validate(struct enc_key_data *enc_state, int image_index,
 
         rc = (!found_decompressed_size || !found_decompressed_sha || !found_decompressed_signature);
         if (rc) {
+            BOOT_LOG_ERR("Decompressed image is missing required TLVs");
             goto out;
         }
     }
@@ -546,9 +552,11 @@ bootutil_img_validate(struct enc_key_data *enc_state, int image_index,
     rc = bootutil_img_hash(enc_state, image_index, hdr, fap, tmp_buf,
             tmp_buf_sz, hash, seed, seed_len);
     if (rc) {
+        BOOT_LOG_ERR("Failed to hash image");
         goto out;
     }
 
+    BOOT_LOG_INF("Image hash: %02X%02X%02X%02X...", hash[0], hash[1], hash[2], hash[3]);
     if (out_hash) {
         memcpy(out_hash, hash, IMAGE_HASH_SIZE);
     }
@@ -558,17 +566,20 @@ bootutil_img_validate(struct enc_key_data *enc_state, int image_index,
     /* If Pure type signature is expected then it has to be there */
     rc = bootutil_check_for_pure(hdr, fap);
     if (rc != 0) {
-	goto out;
+        BOOT_LOG_ERR("Pure signature not found");
+        goto out;
     }
 #endif
 
     rc = bootutil_tlv_iter_begin(&it, hdr, fap, IMAGE_TLV_ANY, false);
     if (rc) {
+        BOOT_LOG_ERR("%d: Failed to iterate over TLVs", __LINE__);
         goto out;
     }
 
     if (it.tlv_end > bootutil_max_image_size(fap)) {
         rc = -1;
+        BOOT_LOG_ERR("TLV area is outside of the image");
         goto out;
     }
 
@@ -579,6 +590,7 @@ bootutil_img_validate(struct enc_key_data *enc_state, int image_index,
     while (true) {
         rc = bootutil_tlv_iter_next(&it, &off, &len, &type);
         if (rc < 0) {
+            BOOT_LOG_ERR("%d: Failed to iterate over TLVs", __LINE__);
             goto out;
         } else if (rc > 0) {
             break;
@@ -600,6 +612,7 @@ bootutil_img_validate(struct enc_key_data *enc_state, int image_index,
              }
              if (!found) {
                   FIH_SET(fih_rc, FIH_FAILURE);
+                  BOOT_LOG_ERR("Rogue TLV found");
                   goto out;
              }
         }
@@ -611,15 +624,18 @@ bootutil_img_validate(struct enc_key_data *enc_state, int image_index,
             /* Verify the image hash. This must always be present. */
             if (len != sizeof(hash)) {
                 rc = -1;
+                BOOT_LOG_ERR("Invalid hash length");
                 goto out;
             }
             rc = LOAD_IMAGE_DATA(hdr, fap, off, buf, sizeof(hash));
             if (rc) {
+                BOOT_LOG_ERR("Failed to read hash");
                 goto out;
             }
 
             FIH_CALL(boot_fih_memequal, fih_rc, hash, buf, sizeof(hash));
             if (FIH_NOT_EQ(fih_rc, FIH_SUCCESS)) {
+                BOOT_LOG_ERR("Hashes do not match");
                 FIH_SET(fih_rc, FIH_FAILURE);
                 goto out;
             }
@@ -637,17 +653,20 @@ bootutil_img_validate(struct enc_key_data *enc_state, int image_index,
              */
             if (len > KEY_BUF_SIZE) {
                 rc = -1;
+                BOOT_LOG_ERR("Invalid key length");
                 goto out;
             }
 #ifndef MCUBOOT_HW_KEY
             rc = LOAD_IMAGE_DATA(hdr, fap, off, buf, len);
             if (rc) {
+                BOOT_LOG_ERR("Failed to read key");
                 goto out;
             }
             key_id = bootutil_find_key(buf, len);
 #else
             rc = LOAD_IMAGE_DATA(hdr, fap, off, key_buf, len);
             if (rc) {
+                BOOT_LOG_ERR("Failed to read key");
                 goto out;
             }
             key_id = bootutil_find_key(image_index, key_buf, len);
@@ -672,10 +691,12 @@ bootutil_img_validate(struct enc_key_data *enc_state, int image_index,
 #endif /* !defined(CONFIG_BOOT_SIGNATURE_USING_KMU) */
             if (!EXPECTED_SIG_LEN(len) || len > sizeof(buf)) {
                 rc = -1;
+                BOOT_LOG_ERR("Invalid signature length");
                 goto out;
             }
             rc = LOAD_IMAGE_DATA(hdr, fap, off, buf, len);
             if (rc) {
+                BOOT_LOG_ERR("Failed to read signature");
                 goto out;
             }
 #ifndef MCUBOOT_SIGN_PURE
@@ -690,6 +711,9 @@ bootutil_img_validate(struct enc_key_data *enc_state, int image_index,
                      hdr->ih_hdr_size + hdr->ih_img_size + hdr->ih_protect_tlv_size,
                      buf, len, key_id);
 #endif
+            if (FIH_NOT_EQ(valid_signature, FIH_SUCCESS)) {
+                BOOT_LOG_ERR("Signature verification failed");
+            }
             key_id = -1;
             break;
         }
@@ -704,11 +728,13 @@ bootutil_img_validate(struct enc_key_data *enc_state, int image_index,
             if (len != sizeof(img_security_cnt)) {
                 /* Security counter is not valid. */
                 rc = -1;
+                BOOT_LOG_ERR("Invalid security counter length");
                 goto out;
             }
 
             rc = LOAD_IMAGE_DATA(hdr, fap, off, &img_security_cnt, len);
             if (rc) {
+                BOOT_LOG_ERR("Failed to read security counter from image");
                 goto out;
             }
 
@@ -716,6 +742,7 @@ bootutil_img_validate(struct enc_key_data *enc_state, int image_index,
                                                            &security_cnt);
             if (FIH_NOT_EQ(fih_rc, FIH_SUCCESS)) {
                 FIH_SET(fih_rc, FIH_FAILURE);
+                BOOT_LOG_ERR("Failed to read security counter from storage");
                 goto out;
             }
 
@@ -725,6 +752,7 @@ bootutil_img_validate(struct enc_key_data *enc_state, int image_index,
             fih_rc = fih_ret_encode_zero_equality(img_security_cnt <
                                    (uint32_t)fih_int_decode(security_cnt));
             if (FIH_NOT_EQ(fih_rc, FIH_SUCCESS)) {
+                BOOT_LOG_ERR("Security counter verification failed");
                 FIH_SET(fih_rc, FIH_FAILURE);
                 goto out;
             }
@@ -740,6 +768,7 @@ bootutil_img_validate(struct enc_key_data *enc_state, int image_index,
 #if defined(EXPECTED_HASH_TLV) && !defined(MCUBOOT_SIGN_PURE)
     rc = !image_hash_valid;
     if (rc) {
+        BOOT_LOG_ERR("Image hash not found");
         goto out;
     }
 #elif defined(MCUBOOT_SIGN_PURE)
@@ -751,6 +780,7 @@ bootutil_img_validate(struct enc_key_data *enc_state, int image_index,
 #endif
 #ifdef MCUBOOT_HW_ROLLBACK_PROT
     if (FIH_NOT_EQ(security_counter_valid, FIH_SUCCESS)) {
+        BOOT_LOG_ERR("Security counter verification failed");
         rc = -1;
         goto out;
     }
@@ -767,22 +797,26 @@ bootutil_img_validate(struct enc_key_data *enc_state, int image_index,
         rc = bootutil_img_hash_decompress(enc_state, image_index, hdr, fap, tmp_buf, tmp_buf_sz,
                                           hash, seed, seed_len);
         if (rc) {
+            BOOT_LOG_ERR("Failed to hash decompressed image");
             goto out;
         }
 
         rc = bootutil_tlv_iter_begin(&it, hdr, fap, IMAGE_TLV_DECOMP_SHA, true);
         if (rc) {
+            BOOT_LOG_ERR("%d: Failed to iterate over TLVs", __LINE__);
             goto out;
         }
 
         if (it.tlv_end > bootutil_max_image_size(fap)) {
             rc = -1;
+            BOOT_LOG_ERR("TLV area is outside of the image");
             goto out;
         }
 
         while (true) {
             rc = bootutil_tlv_iter_next(&it, &off, &len, &type);
             if (rc < 0) {
+                BOOT_LOG_ERR("%d: Failed to iterate over TLVs", __LINE__);
                 goto out;
             } else if (rc > 0) {
                 break;
@@ -792,16 +826,19 @@ bootutil_img_validate(struct enc_key_data *enc_state, int image_index,
                 /* Verify the image hash. This must always be present. */
                 if (len != sizeof(hash)) {
                     rc = -1;
+                    BOOT_LOG_ERR("Invalid hash length");
                     goto out;
                 }
                 rc = LOAD_IMAGE_DATA(hdr, fap, off, buf, sizeof(hash));
                 if (rc) {
+                    BOOT_LOG_ERR("Failed to read hash");
                     goto out;
                 }
 
                 FIH_CALL(boot_fih_memequal, fih_rc, hash, buf, sizeof(hash));
                 if (FIH_NOT_EQ(fih_rc, FIH_SUCCESS)) {
                     FIH_SET(fih_rc, FIH_FAILURE);
+                    BOOT_LOG_ERR("Hashes do not match");
                     goto out;
                 }
 
@@ -818,17 +855,20 @@ bootutil_img_validate(struct enc_key_data *enc_state, int image_index,
 #ifdef EXPECTED_KEY_TLV
         rc = bootutil_tlv_iter_begin(&it, hdr, fap, EXPECTED_KEY_TLV, false);
         if (rc) {
+            BOOT_LOG_ERR("%d: Failed to iterate over TLVs", __LINE__);
             goto out;
         }
 
         if (it.tlv_end > bootutil_max_image_size(fap)) {
             rc = -1;
+            BOOT_LOG_ERR("TLV area is outside of the image");
             goto out;
         }
 
         while (true) {
             rc = bootutil_tlv_iter_next(&it, &off, &len, &type);
             if (rc < 0) {
+                BOOT_LOG_ERR("%d: Failed to iterate over TLVs", __LINE__);
                 goto out;
             } else if (rc > 0) {
                 break;
@@ -840,17 +880,20 @@ bootutil_img_validate(struct enc_key_data *enc_state, int image_index,
                  */
                 if (len > KEY_BUF_SIZE) {
                     rc = -1;
+                    BOOT_LOG_ERR("Invalid key length");
                     goto out;
                  }
 #ifndef MCUBOOT_HW_KEY
                 rc = LOAD_IMAGE_DATA(hdr, fap, off, buf, len);
                 if (rc) {
+                    BOOT_LOG_ERR("Failed to read key");
                     goto out;
                 }
                 key_id = bootutil_find_key(buf, len);
 #else
                 rc = LOAD_IMAGE_DATA(hdr, fap, off, key_buf, len);
                 if (rc) {
+                    BOOT_LOG_ERR("Failed to read key");
                     goto out;
                 }
                 key_id = bootutil_find_key(image_index, key_buf, len);
@@ -865,17 +908,20 @@ bootutil_img_validate(struct enc_key_data *enc_state, int image_index,
 
         rc = bootutil_tlv_iter_begin(&it, hdr, fap, IMAGE_TLV_DECOMP_SIGNATURE, true);
         if (rc) {
+            BOOT_LOG_ERR("%d: Failed to iterate over TLVs", __LINE__);
             goto out;
         }
 
         if (it.tlv_end > bootutil_max_image_size(fap)) {
             rc = -1;
+            BOOT_LOG_ERR("TLV area is outside of the image");
             goto out;
         }
 
         while (true) {
             rc = bootutil_tlv_iter_next(&it, &off, &len, &type);
             if (rc < 0) {
+                BOOT_LOG_ERR("%d: Failed to iterate over TLVs", __LINE__);
                 goto out;
             } else if (rc > 0) {
                 rc = 0;
@@ -891,10 +937,12 @@ bootutil_img_validate(struct enc_key_data *enc_state, int image_index,
 
                 if (!EXPECTED_SIG_LEN(len) || len > sizeof(buf)) {
                     rc = -1;
+                    BOOT_LOG_ERR("Signature length invalid")
                     goto out;
                 }
                 rc = LOAD_IMAGE_DATA(hdr, fap, off, buf, len);
                 if (rc) {
+                    BOOT_LOG_ERR("Failed to read signature");
                     goto out;
                 }
 
